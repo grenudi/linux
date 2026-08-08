@@ -102,7 +102,7 @@ static struct snd_soc_dai_driver msm8998_lpass_cpu_dai_driver[] = {
 static int msm8998_lpass_alloc_dma_channel(struct lpass_data *drvdata,
 					   int direction, unsigned int dai_id)
 {
-	struct lpass_variant *v = drvdata->variant;
+	const struct lpass_variant *v = drvdata->variant;
 	int chan = 0;
 
 	if (dai_id == LPASS_DP_RX) {
@@ -149,7 +149,7 @@ static int msm8998_lpass_free_dma_channel(struct lpass_data *drvdata, int chan, 
 static int msm8998_lpass_init(struct platform_device *pdev)
 {
 	struct lpass_data *drvdata = platform_get_drvdata(pdev);
-	struct lpass_variant *variant = drvdata->variant;
+	const struct lpass_variant *variant = drvdata->variant;
 	struct device *dev = &pdev->dev;
 	int ret, i;
 
