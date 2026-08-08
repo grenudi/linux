@@ -929,6 +929,19 @@ config INPUT_AMD_SFH_TABLETMODE
 	  To compile this driver as a module, choose M here: the module
 	  will be called amd_sfh_tabletmode.
 
+config INPUT_DRV2624_HAPTICS
+	tristate "TI DRV2624 haptics support"
+	depends on INPUT && I2C
+	select INPUT_FF_MEMLESS
+	select REGMAP_I2C
+	help
+	  Say Y to enable support for the Texas Instruments DRV2624 haptics
+	  driver. Exposes the actuator through the force-feedback API, which
+	  is what userspace haptics daemons use.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called drv2624.
+
 config INPUT_DRV260X_HAPTICS
 	tristate "TI DRV260X haptics support"
 	depends on INPUT && I2C
