@@ -46,22 +46,6 @@ struct msm8998_snd_data {
 
 static unsigned int tdm_slot_offset[8] = {0, 4, 8, 12, 16, 20, 24, 28};
 
-/* Runtime knob so the mic channel count can be swept without a rebuild. */
-static unsigned int slim_tx_channels = 1;
-module_param(slim_tx_channels, uint, 0644);
-MODULE_PARM_DESC(slim_tx_channels, "channel count for the SLIMBUS_0_TX backend");
-
-/*
- * Backend rate, swept the same way. Every backend was hard-pinned to 48 kHz,
- * which is also the only rate that can reach the codec from userspace -- so
- * there was no way to ask whether the codec's 2:1 sample loss follows the
- * programmed rate or the hardware's own clock. Default is the previous
- * hard-coded value, so leaving it alone changes nothing.
- */
-static unsigned int be_rate = DEFAULT_SAMPLE_RATE_48K;
-module_param(be_rate, uint, 0644);
-MODULE_PARM_DESC(be_rate, "sample rate forced on every backend");
-
 static int msm8998_slim_snd_hw_params(struct snd_pcm_substream *substream,
 				     struct snd_pcm_hw_params *params)
 {
@@ -478,7 +462,8 @@ static int msm8998_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 
 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 
-	rate->min = rate->max = be_rate;
+	rate->min = DEFAULT_SAMPLE_RATE_48K;
+	rate->max = DEFAULT_SAMPLE_RATE_48K;
 	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
 
 	/*
@@ -500,7 +485,8 @@ static int msm8998_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	 */
 	switch (cpu_dai->id) {
 	case SLIMBUS_0_TX:
-		channels->min = channels->max = slim_tx_channels;
+		channels->min = 1;
+		channels->max = 1;
 		break;
 	default:
 		channels->min = channels->max = 2;
