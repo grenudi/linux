@@ -1552,11 +1552,17 @@ int q6afe_i2s_port_prepare(struct q6afe_port *port, struct q6afe_i2s_cfg *cfg)
 	pcfg->i2s_cfg.bit_width = cfg->bit_width;
 	pcfg->i2s_cfg.data_format = AFE_LINEAR_PCM_DATA;
 
+	/*
+	 * The clock-provider names are written from the codec's point of view,
+	 * so BC_FC (codec bit- and frame-clock consumer) is the case where the
+	 * CPU has to generate the word clock itself.
+	 */
 	switch (cfg->fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_BP_FP:
+	case SND_SOC_DAIFMT_BC_FC:
+		/* CPU is master */
 		pcfg->i2s_cfg.ws_src = AFE_PORT_CONFIG_I2S_WS_SRC_INTERNAL;
 		break;
-	case SND_SOC_DAIFMT_BC_FC:
+	case SND_SOC_DAIFMT_BP_FP:
 		/* CPU is slave */
 		pcfg->i2s_cfg.ws_src = AFE_PORT_CONFIG_I2S_WS_SRC_EXTERNAL;
 		break;
