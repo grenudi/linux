@@ -131,7 +131,7 @@
 			};
 
 			codec {
-				sound-dai = <&wcd937x 1>, <&swr2 0>, <&txmacro 0>;
+				sound-dai = <&wcd937x 1>, <&swr2 1>, <&txmacro 0>;
 			};
 
 			platform {
