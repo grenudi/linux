@@ -4907,17 +4907,9 @@
 
 			wcd9375_reset_active: wcd9375-reset-active-state {
 				pins = "gpio6";
-				function = "cdc_pdm_rx";
-				drive-strength = <16>;
-				output-high;
-			};
-
-			wcd9375_reset_sleep: wcd9375-reset-sleep-state {
-				pins = "gpio6";
-				function = "cdc_pdm_rx";
+				function = "gpio";
 				drive-strength = <16>;
 				bias-disable;
-				output-low;
 			};
 
 			dmic01_active: dmic01-active-state {
