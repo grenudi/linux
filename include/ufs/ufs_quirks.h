@@ -110,8 +110,9 @@ struct ufs_dev_quirk {
 #define UFS_DEVICE_QUIRK_NO_TIMESTAMP_SUPPORT	(1 << 13)
 
 /*
- * Never send the purge flag (fPurgeEnable) to this device. Some Hynix cards on
- * Qualcomm hosts lose their bootloader to a purge the host did not mean to run.
+ * Never send the purge flag (fPurgeEnable) to this device. A Hynix card on
+ * a Qualcomm host is reported (not verified here) to lose its bootloader to a
+ * purge; Sony kernels are not known to send it.
  */
 #define UFS_DEVICE_QUIRK_NO_PURGE		(1 << 14)
 

@@ -3461,6 +3461,27 @@ static int ufshcd_query_flag_retry(struct ufs_hba *hba,
 	return ret;
 }
 
+/*
+ * A write of fPurgeEnable (set, clear or toggle) must not reach a device that
+ * carries UFS_DEVICE_QUIRK_NO_PURGE, by any path that builds the query.
+ */
+static bool ufshcd_purge_refused(struct ufs_hba *hba, u8 opcode, u8 idn)
+{
+	if (idn != QUERY_FLAG_IDN_PURGE_ENABLE ||
+	    !(hba->dev_quirks & UFS_DEVICE_QUIRK_NO_PURGE))
+		return false;
+
+	switch (opcode) {
+	case UPIU_QUERY_OPCODE_SET_FLAG:
+	case UPIU_QUERY_OPCODE_CLEAR_FLAG:
+	case UPIU_QUERY_OPCODE_TOGGLE_FLAG:
+		dev_warn_ratelimited(hba->dev, "%s: purge refused on this device\n", __func__);
+		return true;
+	default:
+		return false;
+	}
+}
+
 /**
  * ufshcd_query_flag() - API function for sending flag query requests
  * @hba: per-adapter instance
@@ -3482,12 +3503,8 @@ int ufshcd_query_flag(struct ufs_hba *hba, enum query_opcode opcode,
 
 	BUG_ON(!hba);
 
-	if (idn == QUERY_FLAG_IDN_PURGE_ENABLE &&
-	    opcode != UPIU_QUERY_OPCODE_READ_FLAG &&
-	    hba->dev_quirks & UFS_DEVICE_QUIRK_NO_PURGE) {
-		dev_warn(hba->dev, "%s: purge refused on this device\n", __func__);
+	if (ufshcd_purge_refused(hba, opcode, idn))
 		return -EPERM;
-	}
 
 	ufshcd_dev_man_lock(hba);
 
@@ -7669,6 +7686,11 @@ static int ufshcd_issue_devman_upiu_cmd(struct ufs_hba *hba,
 
 	if (WARN_ON_ONCE(!cmd))
 		return -ENOMEM;
+
+	/* the UPIU is judged by what the device receives, not by the caller's msgcode */
+	if ((req_upiu->header.transaction_code & 0x3f) == UPIU_TRANSACTION_QUERY_REQ &&
+	    ufshcd_purge_refused(hba, req_upiu->qr.opcode, req_upiu->qr.idn))
+		return -EPERM;
 
 	tag = scsi_cmd_to_rq(cmd)->tag;
 

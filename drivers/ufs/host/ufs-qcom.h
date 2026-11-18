@@ -238,12 +238,12 @@ enum {
 #define UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING	BIT(17)
 
 /*
- * Some devices (Hynix) need TX HS sync length 0x48 on gears 1 to 3 for a
- * reliable link; Sony's yoshino kernels set the same.
+ * Hynix cards are reported to need TX HS sync length 0x48 on gears 1-3 for a
+ * reliable link; Sony yoshino kernels set it (the need is not verified here).
  */
 #define UFS_DEVICE_QUIRK_EXTEND_SYNC_LENGTH		BIT(18)
 
-/* Run one TX data lane only: available lanes set to 1, and no more asked for. */
+/* Run one TX data lane only: the power-mode change asks for lane_tx = 1. */
 #define UFS_DEVICE_QUIRK_ONE_TX_LANE			BIT(19)
 
 /* ICE allocator type to share AES engines among TX stream and RX stream */

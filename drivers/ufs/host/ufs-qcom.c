@@ -1269,9 +1269,17 @@ out:
 
 static void ufs_qcom_extend_sync_length(struct ufs_hba *hba)
 {
-	ufshcd_dme_set(hba, UIC_ARG_MIB(PA_TXHSG1SYNCLENGTH), 0x48);
-	ufshcd_dme_set(hba, UIC_ARG_MIB(PA_TXHSG2SYNCLENGTH), 0x48);
-	ufshcd_dme_set(hba, UIC_ARG_MIB(PA_TXHSG3SYNCLENGTH), 0x48);
+	static const u32 mib[] = {
+		PA_TXHSG1SYNCLENGTH, PA_TXHSG2SYNCLENGTH, PA_TXHSG3SYNCLENGTH
+	};
+	int i, err;
+
+	for (i = 0; i < ARRAY_SIZE(mib); i++) {
+		err = ufshcd_dme_set(hba, UIC_ARG_MIB(mib[i]), 0x48);
+		if (err)
+			dev_err(hba->dev, "Failed (%d) set TX HS sync length G%d\n",
+				err, i + 1);
+	}
 }
 
 static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
@@ -1285,9 +1293,6 @@ static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 
 	if (hba->dev_quirks & UFS_DEVICE_QUIRK_EXTEND_SYNC_LENGTH)
 		ufs_qcom_extend_sync_length(hba);
-
-	if (hba->dev_quirks & UFS_DEVICE_QUIRK_ONE_TX_LANE)
-		ufshcd_dme_set(hba, UIC_ARG_MIB(PA_AVAILTXDATALANES), 1);
 
 	if (hba->dev_quirks & UFS_DEVICE_QUIRK_PA_TX_HSG1_SYNC_LENGTH)
 		ufs_qcom_override_pa_tx_hsg1_sync_len(hba);
