@@ -6,6 +6,7 @@
 #include <linux/of.h>
 #include <linux/property.h>
 #include <linux/platform_device.h>
+#include <linux/pm_wakeirq.h>
 #include <linux/regmap.h>
 #include <linux/watchdog.h>
 
@@ -48,6 +49,7 @@ struct pm8916_wdt {
 	struct regmap *regmap;
 	struct watchdog_device wdev;
 	u32 baseaddr;
+	bool armed_in_suspend;
 };
 
 static int pm8916_wdt_start(struct watchdog_device *wdev)
@@ -117,8 +119,19 @@ static irqreturn_t pm8916_wdt_isr(int irq, void *arg)
 	if (err)
 		return IRQ_HANDLED;
 
-	if (sts & PMIC_WD_BARK_STS_BIT)
-		watchdog_notify_pretimeout(&wdt->wdev);
+	if (!(sts & PMIC_WD_BARK_STS_BIT))
+		return IRQ_HANDLED;
+
+	/*
+	 * A bark while the watchdog was kept running through suspend is the
+	 * wakeup asked for: the system is awake again, so pet it.
+	 */
+	if (READ_ONCE(wdt->armed_in_suspend)) {
+		pm8916_wdt_ping(&wdt->wdev);
+		return IRQ_HANDLED;
+	}
+
+	watchdog_notify_pretimeout(&wdt->wdev);
 
 	return IRQ_HANDLED;
 }
@@ -190,6 +203,18 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 		if (err)
 			return err;
 
+		/*
+		 * Capable of waking the system, but not enabled to: keeping
+		 * the watchdog running through suspend is the user's choice
+		 * (power/wakeup), as it wakes the system every pretimeout.
+		 */
+		if (device_property_read_bool(dev, "wakeup-source")) {
+			device_set_wakeup_capable(dev, true);
+			err = devm_pm_set_wake_irq(dev, irq);
+			if (err)
+				return err;
+		}
+
 		wdt->wdev.info = &pm8916_wdt_pt_ident;
 	} else {
 		if (irq == -EPROBE_DEFER)
@@ -250,20 +275,36 @@ static int __maybe_unused pm8916_wdt_suspend(struct device *dev)
 {
 	struct pm8916_wdt *wdt = dev_get_drvdata(dev);
 
-	if (watchdog_active(&wdt->wdev))
-		return pm8916_wdt_stop(&wdt->wdev);
+	if (!watchdog_active(&wdt->wdev))
+		return 0;
 
-	return 0;
+	/*
+	 * Allowed to wake the system, and given a pretimeout to do it by:
+	 * keep counting through suspend. The bark wakes the system, which
+	 * pets the watchdog; a system that does not come back is reset by
+	 * the bite, pretimeout seconds later.
+	 */
+	if (device_may_wakeup(dev) && wdt->wdev.pretimeout) {
+		WRITE_ONCE(wdt->armed_in_suspend, true);
+		return pm8916_wdt_ping(&wdt->wdev);
+	}
+
+	return pm8916_wdt_stop(&wdt->wdev);
 }
 
 static int __maybe_unused pm8916_wdt_resume(struct device *dev)
 {
 	struct pm8916_wdt *wdt = dev_get_drvdata(dev);
 
-	if (watchdog_active(&wdt->wdev))
-		return pm8916_wdt_start(&wdt->wdev);
+	if (!watchdog_active(&wdt->wdev))
+		return 0;
 
-	return 0;
+	if (READ_ONCE(wdt->armed_in_suspend)) {
+		WRITE_ONCE(wdt->armed_in_suspend, false);
+		return pm8916_wdt_ping(&wdt->wdev);
+	}
+
+	return pm8916_wdt_start(&wdt->wdev);
 }
 
 static SIMPLE_DEV_PM_OPS(pm8916_wdt_pm_ops, pm8916_wdt_suspend,
