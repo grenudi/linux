@@ -318,6 +318,13 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 	watchdog_init_timeout(&wdt->wdev, 0, dev);
 	pm8916_wdt_configure_timers(&wdt->wdev);
 
+	/*
+	 * S2 outlives a reset of the SoC: left enabled, it bites the next
+	 * kernel, and one without this driver resets every timeout seconds.
+	 */
+	watchdog_stop_on_reboot(&wdt->wdev);
+	watchdog_stop_on_unregister(&wdt->wdev);
+
 	return devm_watchdog_register_device(dev, &wdt->wdev);
 }
 
