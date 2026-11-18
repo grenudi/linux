@@ -1038,6 +1038,9 @@ static int ufs_qcom_pwr_change_notify(struct ufs_hba *hba,
 						PA_INITIAL_ADAPT);
 		}
 
+		if (hba->dev_quirks & UFS_DEVICE_QUIRK_ONE_TX_LANE)
+			dev_req_params->lane_tx = 1;
+
 		if (hba->dev_quirks & UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING)
 			ufs_qcom_set_tx_hs_equalizer(hba,
 					dev_req_params->gear_tx, dev_req_params->lane_tx);
@@ -1264,6 +1267,13 @@ out:
 		ufs_qcom_limit_max_gear(hba, UFS_HS_G5);
 }
 
+static void ufs_qcom_extend_sync_length(struct ufs_hba *hba)
+{
+	ufshcd_dme_set(hba, UIC_ARG_MIB(PA_TXHSG1SYNCLENGTH), 0x48);
+	ufshcd_dme_set(hba, UIC_ARG_MIB(PA_TXHSG2SYNCLENGTH), 0x48);
+	ufshcd_dme_set(hba, UIC_ARG_MIB(PA_TXHSG3SYNCLENGTH), 0x48);
+}
+
 static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 {
 	int err = 0;
@@ -1272,6 +1282,12 @@ static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 
 	if (hba->dev_quirks & UFS_DEVICE_QUIRK_HOST_PA_SAVECONFIGTIME)
 		err = ufs_qcom_quirk_host_pa_saveconfigtime(hba);
+
+	if (hba->dev_quirks & UFS_DEVICE_QUIRK_EXTEND_SYNC_LENGTH)
+		ufs_qcom_extend_sync_length(hba);
+
+	if (hba->dev_quirks & UFS_DEVICE_QUIRK_ONE_TX_LANE)
+		ufshcd_dme_set(hba, UIC_ARG_MIB(PA_AVAILTXDATALANES), 1);
 
 	if (hba->dev_quirks & UFS_DEVICE_QUIRK_PA_TX_HSG1_SYNC_LENGTH)
 		ufs_qcom_override_pa_tx_hsg1_sync_len(hba);
@@ -1283,7 +1299,10 @@ static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 static struct ufs_dev_quirk ufs_qcom_dev_fixups[] = {
 	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX,
 	  .model = UFS_ANY_MODEL,
-	  .quirk = UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM },
+	  .quirk = UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM |
+		   UFS_DEVICE_QUIRK_EXTEND_SYNC_LENGTH |
+		   UFS_DEVICE_QUIRK_NO_PURGE |
+		   UFS_DEVICE_QUIRK_ONE_TX_LANE },
 	{ .wmanufacturerid = UFS_VENDOR_WDC,
 	  .model = UFS_ANY_MODEL,
 	  .quirk = UFS_DEVICE_QUIRK_HOST_PA_TACTIVATE },

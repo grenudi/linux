@@ -3482,6 +3482,13 @@ int ufshcd_query_flag(struct ufs_hba *hba, enum query_opcode opcode,
 
 	BUG_ON(!hba);
 
+	if (idn == QUERY_FLAG_IDN_PURGE_ENABLE &&
+	    opcode != UPIU_QUERY_OPCODE_READ_FLAG &&
+	    hba->dev_quirks & UFS_DEVICE_QUIRK_NO_PURGE) {
+		dev_warn(hba->dev, "%s: purge refused on this device\n", __func__);
+		return -EPERM;
+	}
+
 	ufshcd_dev_man_lock(hba);
 
 	ufshcd_init_query(hba, &request, &response, opcode, idn, index,

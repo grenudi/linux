@@ -109,4 +109,10 @@ struct ufs_dev_quirk {
 /* Some UFS 4 devices do not support the qTimestamp attribute */
 #define UFS_DEVICE_QUIRK_NO_TIMESTAMP_SUPPORT	(1 << 13)
 
+/*
+ * Never send the purge flag (fPurgeEnable) to this device. Some Hynix cards on
+ * Qualcomm hosts lose their bootloader to a purge the host did not mean to run.
+ */
+#define UFS_DEVICE_QUIRK_NO_PURGE		(1 << 14)
+
 #endif /* UFS_QUIRKS_H_ */
