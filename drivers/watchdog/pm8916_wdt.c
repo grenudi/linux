@@ -15,6 +15,9 @@
 #define PON_POFF_REASON2_UVLO		BIT(5)
 #define PON_POFF_REASON2_OTST3		BIT(6)
 
+/* Second generation PON (PM8998 and later): the reasons moved, PMIC_WD kept its bit */
+#define PON_GEN2_POFF_REASON1		0xc5
+
 #define PON_INT_RT_STS			0x10
 #define PMIC_WD_BARK_STS_BIT		BIT(6)
 
@@ -35,6 +38,11 @@
 #define PM8916_WDT_DEFAULT_TIMEOUT	32
 #define PM8916_WDT_MIN_TIMEOUT		1
 #define PM8916_WDT_MAX_TIMEOUT		127
+
+struct pm8916_wdt_data {
+	unsigned int poff_reason;	/* the first power-off reason register */
+	bool poff_reason2;		/* a second follows it: UVLO, OTST3 */
+};
 
 struct pm8916_wdt {
 	struct regmap *regmap;
@@ -141,10 +149,15 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct pm8916_wdt *wdt;
+	const struct pm8916_wdt_data *data;
 	struct device *parent;
 	unsigned int val;
 	int err, irq;
-	u8 poff[2];
+	u8 poff[2] = { };
+
+	data = device_get_match_data(dev);
+	if (!data)
+		return -ENODEV;
 
 	wdt = devm_kzalloc(dev, sizeof(*wdt), GFP_KERNEL);
 	if (!wdt)
@@ -185,8 +198,8 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 		wdt->wdev.info = &pm8916_wdt_ident;
 	}
 
-	err = regmap_bulk_read(wdt->regmap, wdt->baseaddr + PON_POFF_REASON1,
-			       &poff, ARRAY_SIZE(poff));
+	err = regmap_bulk_read(wdt->regmap, wdt->baseaddr + data->poff_reason,
+			       &poff, data->poff_reason2 ? 2 : 1);
 	if (err) {
 		dev_err(dev, "failed to read POFF reason: %d\n", err);
 		return err;
@@ -256,8 +269,18 @@ static int __maybe_unused pm8916_wdt_resume(struct device *dev)
 static SIMPLE_DEV_PM_OPS(pm8916_wdt_pm_ops, pm8916_wdt_suspend,
 			 pm8916_wdt_resume);
 
+static const struct pm8916_wdt_data pm8916_wdt_data = {
+	.poff_reason = PON_POFF_REASON1,
+	.poff_reason2 = true,
+};
+
+static const struct pm8916_wdt_data pm8998_wdt_data = {
+	.poff_reason = PON_GEN2_POFF_REASON1,
+};
+
 static const struct of_device_id pm8916_wdt_id_table[] = {
-	{ .compatible = "qcom,pm8916-wdt" },
+	{ .compatible = "qcom,pm8916-wdt", .data = &pm8916_wdt_data },
+	{ .compatible = "qcom,pm8998-wdt", .data = &pm8998_wdt_data },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, pm8916_wdt_id_table);
