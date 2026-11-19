@@ -2321,6 +2321,10 @@ static int qmp_ufs_phy_calibrate(struct phy *phy)
 		return ret;
 	}
 
+	/* Read-only: RX line-config disable (Android PHY_OFF(0x130)) as our init leaves it; we never write it, the PCS is up here */
+	if (cfg == &msm8998_ufsphy_cfg_3_0_0 || cfg == &msm8998_ufsphy_cfg_3_1_0)
+		dev_info(qmp->dev, "UFS_PHY_LINECFG_DISABLE 0x%08x\n", readl(pcs + 0x130));
+
 	return 0;
 }
 
