@@ -14,7 +14,13 @@ allOf:
 
 properties:
   compatible:
-    const: qcom,pm8916-wdt
+    oneOf:
+      - enum:
+          - qcom,pm8916-wdt
+          - qcom,pm8998-wdt
+      - items:
+          - const: qcom,pm6150-wdt
+          - const: qcom,pm8998-wdt
 
   interrupts:
     maxItems: 1
