@@ -7689,8 +7689,10 @@ static int ufshcd_issue_devman_upiu_cmd(struct ufs_hba *hba,
 
 	/* the UPIU is judged by what the device receives, not by the caller's msgcode */
 	if ((req_upiu->header.transaction_code & 0x3f) == UPIU_TRANSACTION_QUERY_REQ &&
-	    ufshcd_purge_refused(hba, req_upiu->qr.opcode, req_upiu->qr.idn))
-		return -EPERM;
+	    ufshcd_purge_refused(hba, req_upiu->qr.opcode, req_upiu->qr.idn)) {
+		err = -EPERM;
+		goto put_dev_mgmt_cmd;
+	}
 
 	tag = scsi_cmd_to_rq(cmd)->tag;
 
