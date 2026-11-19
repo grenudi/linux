@@ -134,7 +134,7 @@ static int drv2624_init_actuator(struct device *dev, struct drv2624 *haptics)
 		odclamp = 0;
 	if (device_property_read_u32(dev, "ti,lra-frequency", &lra_freq))
 		lra_freq = 0;
-	if (device_property_read_u32(dev, "ti,ol-lra-frequency", &ol_freq))
+	if (device_property_read_u32(dev, "ti,ol-lra-frequency", &ol_freq) || !ol_freq)
 		ol_freq = lra_freq;
 	if (device_property_read_u32(dev, "ti,lra-wave-shape", &wave))
 		wave = 0;
@@ -202,6 +202,14 @@ static int drv2624_init_actuator(struct device *dev, struct drv2624 *haptics)
 				  DRV2624_LRA_WAVE_SHAPE_MASK, wave);
 }
 
+static void drv2624_stop(void *data)
+{
+	struct drv2624 *haptics = data;
+
+	cancel_work_sync(&haptics->play_work);
+	regmap_write(haptics->regmap, DRV2624_REG_GO, 0);
+}
+
 static int drv2624_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
@@ -252,6 +260,10 @@ static int drv2624_probe(struct i2c_client *client)
 	input_set_capability(haptics->input, EV_FF, FF_RUMBLE);
 
 	INIT_WORK(&haptics->play_work, drv2624_play_work);
+
+	ret = devm_add_action_or_reset(dev, drv2624_stop, haptics);
+	if (ret)
+		return ret;
 	i2c_set_clientdata(client, haptics);
 
 	ret = input_ff_create_memless(haptics->input, NULL, drv2624_play);
