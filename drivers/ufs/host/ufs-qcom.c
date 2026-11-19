@@ -1293,9 +1293,15 @@ static int ufs_qcom_apply_dev_quirks(struct ufs_hba *hba)
 
 /* UFS device-specific quirks */
 static struct ufs_dev_quirk ufs_qcom_dev_fixups[] = {
+	/*
+	 * The Pixel 2's card. The vendor kernel runs it with this one quirk
+	 * (its Hynix entries match other model prefixes), and the purge guard
+	 * is ours: Android never sends fPurgeEnable to it.
+	 */
 	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX,
-	  .model = UFS_ANY_MODEL,
-	  .quirk = UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM },
+	  .model = "H28U74301AMR",
+	  .quirk = UFS_DEVICE_QUIRK_HOST_PA_SAVECONFIGTIME |
+		   UFS_DEVICE_QUIRK_NO_PURGE },
 	{ .wmanufacturerid = UFS_VENDOR_WDC,
 	  .model = UFS_ANY_MODEL,
 	  .quirk = UFS_DEVICE_QUIRK_HOST_PA_TACTIVATE },
