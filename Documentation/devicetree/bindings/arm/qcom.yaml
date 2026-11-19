@@ -391,6 +391,7 @@ properties:
           - enum:
               - asus,novago-tp370ql
               - fxtec,pro1
+              - google,walleye
               - hp,envy-x2
               - lenovo,miix-630
               - oneplus,cheeseburger
