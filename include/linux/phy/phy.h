@@ -20,6 +20,7 @@
 #include <linux/phy/phy-hdmi.h>
 #include <linux/phy/phy-lvds.h>
 #include <linux/phy/phy-mipi-dphy.h>
+#include <linux/phy/phy-ufs.h>
 
 struct phy;
 
@@ -73,12 +74,15 @@ union phy_notify {
  *		the LVDS phy mode.
  * @hdmi:	Configuration set applicable for phys supporting
  *		the HDMI phy mode.
+ * @ufs:	Configuration set applicable for phys supporting
+ *		UFS, the revision of the host next to them.
  */
 union phy_configure_opts {
 	struct phy_configure_opts_mipi_dphy	mipi_dphy;
 	struct phy_configure_opts_dp		dp;
 	struct phy_configure_opts_lvds		lvds;
 	struct phy_configure_opts_hdmi		hdmi;
+	struct phy_configure_opts_ufs		ufs;
 };
 
 /**
