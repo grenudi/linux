@@ -932,6 +932,7 @@ config INPUT_AMD_SFH_TABLETMODE
 config INPUT_DRV2624_HAPTICS
 	tristate "TI DRV2624 haptics support"
 	depends on INPUT && I2C
+	depends on GPIOLIB || COMPILE_TEST
 	select INPUT_FF_MEMLESS
 	select REGMAP_I2C
 	help
