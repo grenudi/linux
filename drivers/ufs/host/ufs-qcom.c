@@ -490,6 +490,7 @@ static int ufs_qcom_power_up_sequence(struct ufs_hba *hba)
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
 	struct ufs_host_params *host_params = &host->host_params;
 	struct phy *phy = host->generic_phy;
+	union phy_configure_opts phy_opts;
 	enum phy_mode mode;
 	int ret;
 
@@ -523,6 +524,17 @@ static int ufs_qcom_power_up_sequence(struct ufs_hba *hba)
 	ret = phy_set_mode_ext(phy, mode, host->phy_gear);
 	if (ret)
 		goto out_disable_phy;
+
+	/* a PHY whose tables follow the host's revision learns it here */
+	phy_opts.ufs.hw_ver_major = host->hw_ver.major;
+	phy_opts.ufs.hw_ver_minor = host->hw_ver.minor;
+	phy_opts.ufs.hw_ver_step = host->hw_ver.step;
+	ret = phy_configure(phy, &phy_opts);
+	if (ret && ret != -EOPNOTSUPP) {
+		dev_err(hba->dev, "%s: phy configure failed, ret = %d\n",
+			__func__, ret);
+		goto out_disable_phy;
+	}
 
 	/* power on phy - start serdes and phy's power and clocks */
 	ret = phy_power_on(phy);
@@ -1630,6 +1642,9 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 
 	ufs_qcom_get_controller_revision(hba, &host->hw_ver.major,
 		&host->hw_ver.minor, &host->hw_ver.step);
+
+	dev_info(dev, "UFS_HW_VERSION %u.%u.%u\n", host->hw_ver.major,
+		 host->hw_ver.minor, host->hw_ver.step);
 
 	host->dev_ref_clk_ctrl_mmio = hba->mmio_base + REG_UFS_CFG1;
 	host->dev_ref_clk_en_mask = BIT(26);
