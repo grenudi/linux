@@ -1660,6 +1660,14 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 	dev_info(dev, "UFS_HW_VERSION %u.%u.%u\n", host->hw_ver.major,
 		 host->hw_ver.minor, host->hw_ver.step);
 
+	/*
+	 * Read-only: what the bootloader left running, read at the same point
+	 * and clock state as UFS_HW_VERSION above (rails and clocks are on).
+	 */
+	dev_info(dev, "UFS_HOST_LEFT HCS 0x%08x HCE 0x%08x\n",
+		 ufshcd_readl(hba, REG_CONTROLLER_STATUS),
+		 ufshcd_readl(hba, REG_CONTROLLER_ENABLE));
+
 	err = ufs_qcom_phy_configure(host);
 	if (err)
 		goto out_variant_clear;
