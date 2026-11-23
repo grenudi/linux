@@ -14,10 +14,18 @@ allOf:
 
 properties:
   compatible:
-    const: qcom,pm8916-wdt
+    enum:
+      - qcom,pm8916-wdt
+      - qcom,pm8998-wdt
 
   interrupts:
     maxItems: 1
+    description: Bark (pre-timeout) interrupt of the watchdog.
+
+  wakeup-source:
+    description:
+      The bark may wake the system, which lets the watchdog keep counting
+      through system suspend when wakeup is enabled for it.
 
 required:
   - compatible
