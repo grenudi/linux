@@ -1511,7 +1511,7 @@ static const struct msm_pinctrl_soc_data msm8998_pinctrl = {
 	.nfunctions = ARRAY_SIZE(msm8998_functions),
 	.groups = msm8998_groups,
 	.ngroups = ARRAY_SIZE(msm8998_groups),
-	.ngpios = 150,
+	.ngpios = 154,
 	.wakeirq_map = msm8998_mpm_map,
 	.nwakeirq_map = ARRAY_SIZE(msm8998_mpm_map),
 };
