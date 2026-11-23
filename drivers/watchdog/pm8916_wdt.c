@@ -6,6 +6,7 @@
 #include <linux/of.h>
 #include <linux/property.h>
 #include <linux/platform_device.h>
+#include <linux/pm_wakeirq.h>
 #include <linux/regmap.h>
 #include <linux/watchdog.h>
 
@@ -14,6 +15,9 @@
 #define PON_POFF_REASON2		0x0d
 #define PON_POFF_REASON2_UVLO		BIT(5)
 #define PON_POFF_REASON2_OTST3		BIT(6)
+
+/* Second generation PON (PM8998 and later): the reasons moved, PMIC_WD kept its bit */
+#define PON_GEN2_POFF_REASON1		0xc5
 
 #define PON_INT_RT_STS			0x10
 #define PMIC_WD_BARK_STS_BIT		BIT(6)
@@ -36,10 +40,16 @@
 #define PM8916_WDT_MIN_TIMEOUT		1
 #define PM8916_WDT_MAX_TIMEOUT		127
 
+struct pm8916_wdt_data {
+	unsigned int poff_reason;	/* the first power-off reason register */
+	bool poff_reason2;		/* a second follows it: UVLO, OTST3 */
+};
+
 struct pm8916_wdt {
 	struct regmap *regmap;
 	struct watchdog_device wdev;
 	u32 baseaddr;
+	bool armed_in_suspend;
 };
 
 static int pm8916_wdt_start(struct watchdog_device *wdev)
@@ -109,8 +119,19 @@ static irqreturn_t pm8916_wdt_isr(int irq, void *arg)
 	if (err)
 		return IRQ_HANDLED;
 
-	if (sts & PMIC_WD_BARK_STS_BIT)
-		watchdog_notify_pretimeout(&wdt->wdev);
+	if (!(sts & PMIC_WD_BARK_STS_BIT))
+		return IRQ_HANDLED;
+
+	/*
+	 * A bark while the watchdog was kept running through suspend is the
+	 * wakeup asked for: the system is awake again, so pet it.
+	 */
+	if (READ_ONCE(wdt->armed_in_suspend)) {
+		pm8916_wdt_ping(&wdt->wdev);
+		return IRQ_HANDLED;
+	}
+
+	watchdog_notify_pretimeout(&wdt->wdev);
 
 	return IRQ_HANDLED;
 }
@@ -141,10 +162,15 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct pm8916_wdt *wdt;
+	const struct pm8916_wdt_data *data;
 	struct device *parent;
 	unsigned int val;
 	int err, irq;
-	u8 poff[2];
+	u8 poff[2] = { };
+
+	data = device_get_match_data(dev);
+	if (!data)
+		return -ENODEV;
 
 	wdt = devm_kzalloc(dev, sizeof(*wdt), GFP_KERNEL);
 	if (!wdt)
@@ -177,6 +203,18 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 		if (err)
 			return err;
 
+		/*
+		 * Capable of waking the system, but not enabled to: keeping
+		 * the watchdog running through suspend is the user's choice
+		 * (power/wakeup), as it wakes the system every pretimeout.
+		 */
+		if (device_property_read_bool(dev, "wakeup-source")) {
+			device_set_wakeup_capable(dev, true);
+			err = devm_pm_set_wake_irq(dev, irq);
+			if (err)
+				return err;
+		}
+
 		wdt->wdev.info = &pm8916_wdt_pt_ident;
 	} else {
 		if (irq == -EPROBE_DEFER)
@@ -185,8 +223,8 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 		wdt->wdev.info = &pm8916_wdt_ident;
 	}
 
-	err = regmap_bulk_read(wdt->regmap, wdt->baseaddr + PON_POFF_REASON1,
-			       &poff, ARRAY_SIZE(poff));
+	err = regmap_bulk_read(wdt->regmap, wdt->baseaddr + data->poff_reason,
+			       &poff, data->poff_reason2 ? 2 : 1);
 	if (err) {
 		dev_err(dev, "failed to read POFF reason: %d\n", err);
 		return err;
@@ -237,27 +275,53 @@ static int __maybe_unused pm8916_wdt_suspend(struct device *dev)
 {
 	struct pm8916_wdt *wdt = dev_get_drvdata(dev);
 
-	if (watchdog_active(&wdt->wdev))
-		return pm8916_wdt_stop(&wdt->wdev);
+	if (!watchdog_active(&wdt->wdev))
+		return 0;
 
-	return 0;
+	/*
+	 * Allowed to wake the system, and given a pretimeout to do it by:
+	 * keep counting through suspend. The bark wakes the system, which
+	 * pets the watchdog; a system that does not come back is reset by
+	 * the bite, pretimeout seconds later.
+	 */
+	if (device_may_wakeup(dev) && wdt->wdev.pretimeout) {
+		WRITE_ONCE(wdt->armed_in_suspend, true);
+		return pm8916_wdt_ping(&wdt->wdev);
+	}
+
+	return pm8916_wdt_stop(&wdt->wdev);
 }
 
 static int __maybe_unused pm8916_wdt_resume(struct device *dev)
 {
 	struct pm8916_wdt *wdt = dev_get_drvdata(dev);
 
-	if (watchdog_active(&wdt->wdev))
-		return pm8916_wdt_start(&wdt->wdev);
+	if (!watchdog_active(&wdt->wdev))
+		return 0;
 
-	return 0;
+	if (READ_ONCE(wdt->armed_in_suspend)) {
+		WRITE_ONCE(wdt->armed_in_suspend, false);
+		return pm8916_wdt_ping(&wdt->wdev);
+	}
+
+	return pm8916_wdt_start(&wdt->wdev);
 }
 
 static SIMPLE_DEV_PM_OPS(pm8916_wdt_pm_ops, pm8916_wdt_suspend,
 			 pm8916_wdt_resume);
 
+static const struct pm8916_wdt_data pm8916_wdt_data = {
+	.poff_reason = PON_POFF_REASON1,
+	.poff_reason2 = true,
+};
+
+static const struct pm8916_wdt_data pm8998_wdt_data = {
+	.poff_reason = PON_GEN2_POFF_REASON1,
+};
+
 static const struct of_device_id pm8916_wdt_id_table[] = {
-	{ .compatible = "qcom,pm8916-wdt" },
+	{ .compatible = "qcom,pm8916-wdt", .data = &pm8916_wdt_data },
+	{ .compatible = "qcom,pm8998-wdt", .data = &pm8998_wdt_data },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, pm8916_wdt_id_table);
