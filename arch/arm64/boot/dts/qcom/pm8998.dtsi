@@ -59,6 +59,12 @@
 				bias-pull-up;
 				status = "disabled";
 			};
+
+			pm8998_wdt: watchdog {
+				compatible = "qcom,pm8998-wdt";
+				interrupts = <0x0 0x8 6 IRQ_TYPE_EDGE_RISING>;
+				status = "disabled";
+			};
 		};
 
 		pm8998_temp: temp-alarm@2400 {
