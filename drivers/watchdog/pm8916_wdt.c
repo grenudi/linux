@@ -93,7 +93,7 @@ static int pm8916_wdt_configure_timers(struct watchdog_device *wdev)
  * left the watchdog running, the type the firmware chose stays, and that
  * may be a shutdown. Read it back so a type that did not take fails loudly.
  */
-static int pm8916_wdt_set_reset_type(struct pm8916_wdt *wdt,
+static int pm8916_wdt_set_reset_type(struct pm8916_wdt *wdt, u32 type,
 				     struct device *dev, bool running)
 {
 	unsigned int ctl;
@@ -116,7 +116,7 @@ static int pm8916_wdt_set_reset_type(struct pm8916_wdt *wdt,
 
 	err = regmap_update_bits(wdt->regmap,
 				 wdt->baseaddr + PON_PMIC_WD_RESET_S2_CTL,
-				 RESET_TYPE_MASK, RESET_TYPE_HARD);
+				 RESET_TYPE_MASK, type);
 	if (err)
 		return err;
 
@@ -124,7 +124,7 @@ static int pm8916_wdt_set_reset_type(struct pm8916_wdt *wdt,
 			  &ctl);
 	if (err)
 		return err;
-	if ((ctl & RESET_TYPE_MASK) != RESET_TYPE_HARD)
+	if ((ctl & RESET_TYPE_MASK) != type)
 		return -EIO;
 
 	if (running) {
@@ -133,6 +133,35 @@ static int pm8916_wdt_set_reset_type(struct pm8916_wdt *wdt,
 					  wdt->baseaddr + PON_PMIC_WD_RESET_S2_CTL2,
 					  S2_RESET_EN_BIT, S2_RESET_EN_BIT);
 	}
+
+	return 0;
+}
+
+/*
+ * The S2 reset type is hard unless the board names another in qcom,s2-type,
+ * valued as the downstream PON binding has it. A property that is there but
+ * unreadable, or names a type this driver does not set, fails the probe: it
+ * must not fall back to hard silently.
+ */
+static int pm8916_wdt_get_reset_type(struct device *dev, u32 *type)
+{
+	int err;
+
+	*type = RESET_TYPE_HARD;
+
+	if (device_property_present(dev, "qcom,s2-type")) {
+		err = device_property_read_u32(dev, "qcom,s2-type", type);
+		if (err)
+			return dev_err_probe(dev, err,
+					     "unreadable qcom,s2-type\n");
+	}
+
+	if (*type != RESET_TYPE_WARM && *type != RESET_TYPE_SHUTDOWN &&
+	    *type != RESET_TYPE_HARD)
+		return dev_err_probe(dev, -EINVAL, "bad qcom,s2-type %u\n",
+				     *type);
+
+	dev_dbg(dev, "S2 reset type %#x\n", *type);
 
 	return 0;
 }
@@ -196,6 +225,7 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 	struct pm8916_wdt *wdt;
 	struct device *parent;
 	unsigned int val;
+	u32 type;
 	int err, irq;
 	u8 poff[2];
 
@@ -262,7 +292,11 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 	if (val & S2_RESET_EN_BIT)
 		set_bit(WDOG_HW_RUNNING, &wdt->wdev.status);
 
-	err = pm8916_wdt_set_reset_type(wdt, dev, val & S2_RESET_EN_BIT);
+	err = pm8916_wdt_get_reset_type(dev, &type);
+	if (err)
+		return err;
+
+	err = pm8916_wdt_set_reset_type(wdt, type, dev, val & S2_RESET_EN_BIT);
 	if (err) {
 		dev_err(dev, "failed configure watchdog: %d\n", err);
 		return err;
