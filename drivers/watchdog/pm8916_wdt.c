@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/bitops.h>
+#include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/property.h>
 #include <linux/platform_device.h>
+#include <linux/pm_wakeirq.h>
 #include <linux/regmap.h>
 #include <linux/watchdog.h>
 
@@ -14,6 +16,9 @@
 #define PON_POFF_REASON2		0x0d
 #define PON_POFF_REASON2_UVLO		BIT(5)
 #define PON_POFF_REASON2_OTST3		BIT(6)
+
+/* Second generation PON (PM8998 and later): the reasons moved, PMIC_WD kept its bit */
+#define PON_GEN2_POFF_REASON1		0xc5
 
 #define PON_INT_RT_STS			0x10
 #define PMIC_WD_BARK_STS_BIT		BIT(6)
@@ -25,6 +30,7 @@
 #define RESET_TYPE_WARM			0x01
 #define RESET_TYPE_SHUTDOWN		0x04
 #define RESET_TYPE_HARD			0x07
+#define RESET_TYPE_MASK			GENMASK(3, 0)
 
 #define PON_PMIC_WD_RESET_S2_CTL2	0x57
 #define S2_RESET_EN_BIT			BIT(7)
@@ -36,10 +42,16 @@
 #define PM8916_WDT_MIN_TIMEOUT		1
 #define PM8916_WDT_MAX_TIMEOUT		127
 
+struct pm8916_wdt_data {
+	unsigned int poff_reason;	/* the first power-off reason register */
+	bool poff_reason2;		/* a second follows it: UVLO, OTST3 */
+};
+
 struct pm8916_wdt {
 	struct regmap *regmap;
 	struct watchdog_device wdev;
 	u32 baseaddr;
+	bool armed_in_suspend;
 };
 
 static int pm8916_wdt_start(struct watchdog_device *wdev)
@@ -84,6 +96,57 @@ static int pm8916_wdt_configure_timers(struct watchdog_device *wdev)
 			    wdev->pretimeout);
 }
 
+/*
+ * The PON takes a new S2 reset type only while S2 is disabled, and needs
+ * about ten sleep-clock cycles (32 kHz) between the two writes: the same
+ * dance the PON's other S2 resets need. Written blind while the firmware
+ * left the watchdog running, the type the firmware chose stays, and that
+ * may be a shutdown. Read it back so a type that did not take fails loudly.
+ */
+static int pm8916_wdt_set_reset_type(struct pm8916_wdt *wdt,
+				     struct device *dev, bool running)
+{
+	unsigned int ctl;
+	int err;
+
+	if (running) {
+		err = regmap_update_bits(wdt->regmap,
+					 wdt->baseaddr + PON_PMIC_WD_RESET_S2_CTL2,
+					 S2_RESET_EN_BIT, 0);
+		if (err)
+			return err;
+		usleep_range(500, 1000);
+	}
+
+	err = regmap_read(wdt->regmap, wdt->baseaddr + PON_PMIC_WD_RESET_S2_CTL,
+			  &ctl);
+	if (err)
+		return err;
+	dev_dbg(dev, "S2 reset control was %#x\n", ctl);
+
+	err = regmap_update_bits(wdt->regmap,
+				 wdt->baseaddr + PON_PMIC_WD_RESET_S2_CTL,
+				 RESET_TYPE_MASK, RESET_TYPE_HARD);
+	if (err)
+		return err;
+
+	err = regmap_read(wdt->regmap, wdt->baseaddr + PON_PMIC_WD_RESET_S2_CTL,
+			  &ctl);
+	if (err)
+		return err;
+	if ((ctl & RESET_TYPE_MASK) != RESET_TYPE_HARD)
+		return -EIO;
+
+	if (running) {
+		usleep_range(500, 1000);
+		return regmap_update_bits(wdt->regmap,
+					  wdt->baseaddr + PON_PMIC_WD_RESET_S2_CTL2,
+					  S2_RESET_EN_BIT, S2_RESET_EN_BIT);
+	}
+
+	return 0;
+}
+
 static int pm8916_wdt_set_timeout(struct watchdog_device *wdev,
 				  unsigned int timeout)
 {
@@ -109,8 +172,19 @@ static irqreturn_t pm8916_wdt_isr(int irq, void *arg)
 	if (err)
 		return IRQ_HANDLED;
 
-	if (sts & PMIC_WD_BARK_STS_BIT)
-		watchdog_notify_pretimeout(&wdt->wdev);
+	if (!(sts & PMIC_WD_BARK_STS_BIT))
+		return IRQ_HANDLED;
+
+	/*
+	 * A bark while the watchdog was kept running through suspend is the
+	 * wakeup asked for: the system is awake again, so pet it.
+	 */
+	if (READ_ONCE(wdt->armed_in_suspend)) {
+		pm8916_wdt_ping(&wdt->wdev);
+		return IRQ_HANDLED;
+	}
+
+	watchdog_notify_pretimeout(&wdt->wdev);
 
 	return IRQ_HANDLED;
 }
@@ -141,10 +215,15 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct pm8916_wdt *wdt;
+	const struct pm8916_wdt_data *data;
 	struct device *parent;
 	unsigned int val;
 	int err, irq;
-	u8 poff[2];
+	u8 poff[2] = { };
+
+	data = device_get_match_data(dev);
+	if (!data)
+		return -ENODEV;
 
 	wdt = devm_kzalloc(dev, sizeof(*wdt), GFP_KERNEL);
 	if (!wdt)
@@ -177,6 +256,18 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 		if (err)
 			return err;
 
+		/*
+		 * Capable of waking the system, but not enabled to: keeping
+		 * the watchdog running through suspend is the user's choice
+		 * (power/wakeup), as it wakes the system every pretimeout.
+		 */
+		if (device_property_read_bool(dev, "wakeup-source")) {
+			device_set_wakeup_capable(dev, true);
+			err = devm_pm_set_wake_irq(dev, irq);
+			if (err)
+				return err;
+		}
+
 		wdt->wdev.info = &pm8916_wdt_pt_ident;
 	} else {
 		if (irq == -EPROBE_DEFER)
@@ -185,8 +276,8 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 		wdt->wdev.info = &pm8916_wdt_ident;
 	}
 
-	err = regmap_bulk_read(wdt->regmap, wdt->baseaddr + PON_POFF_REASON1,
-			       &poff, ARRAY_SIZE(poff));
+	err = regmap_bulk_read(wdt->regmap, wdt->baseaddr + data->poff_reason,
+			       &poff, data->poff_reason2 ? 2 : 1);
 	if (err) {
 		dev_err(dev, "failed to read POFF reason: %d\n", err);
 		return err;
@@ -209,12 +300,9 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 	if (val & S2_RESET_EN_BIT)
 		set_bit(WDOG_HW_RUNNING, &wdt->wdev.status);
 
-	/* Configure watchdog to hard-reset mode */
-	err = regmap_write(wdt->regmap,
-			   wdt->baseaddr + PON_PMIC_WD_RESET_S2_CTL,
-			   RESET_TYPE_HARD);
+	err = pm8916_wdt_set_reset_type(wdt, dev, val & S2_RESET_EN_BIT);
 	if (err) {
-		dev_err(dev, "failed configure watchdog\n");
+		dev_err(dev, "failed configure watchdog: %d\n", err);
 		return err;
 	}
 
@@ -230,6 +318,13 @@ static int pm8916_wdt_probe(struct platform_device *pdev)
 	watchdog_init_timeout(&wdt->wdev, 0, dev);
 	pm8916_wdt_configure_timers(&wdt->wdev);
 
+	/*
+	 * S2 outlives a reset of the SoC: left enabled, it bites the next
+	 * kernel, and one without this driver resets every timeout seconds.
+	 */
+	watchdog_stop_on_reboot(&wdt->wdev);
+	watchdog_stop_on_unregister(&wdt->wdev);
+
 	return devm_watchdog_register_device(dev, &wdt->wdev);
 }
 
@@ -237,27 +332,53 @@ static int __maybe_unused pm8916_wdt_suspend(struct device *dev)
 {
 	struct pm8916_wdt *wdt = dev_get_drvdata(dev);
 
-	if (watchdog_active(&wdt->wdev))
-		return pm8916_wdt_stop(&wdt->wdev);
+	if (!watchdog_active(&wdt->wdev))
+		return 0;
 
-	return 0;
+	/*
+	 * Allowed to wake the system, and given a pretimeout to do it by:
+	 * keep counting through suspend. The bark wakes the system, which
+	 * pets the watchdog; a system that does not come back is reset by
+	 * the bite, pretimeout seconds later.
+	 */
+	if (device_may_wakeup(dev) && wdt->wdev.pretimeout) {
+		WRITE_ONCE(wdt->armed_in_suspend, true);
+		return pm8916_wdt_ping(&wdt->wdev);
+	}
+
+	return pm8916_wdt_stop(&wdt->wdev);
 }
 
 static int __maybe_unused pm8916_wdt_resume(struct device *dev)
 {
 	struct pm8916_wdt *wdt = dev_get_drvdata(dev);
 
-	if (watchdog_active(&wdt->wdev))
-		return pm8916_wdt_start(&wdt->wdev);
+	if (!watchdog_active(&wdt->wdev))
+		return 0;
 
-	return 0;
+	if (READ_ONCE(wdt->armed_in_suspend)) {
+		WRITE_ONCE(wdt->armed_in_suspend, false);
+		return pm8916_wdt_ping(&wdt->wdev);
+	}
+
+	return pm8916_wdt_start(&wdt->wdev);
 }
 
 static SIMPLE_DEV_PM_OPS(pm8916_wdt_pm_ops, pm8916_wdt_suspend,
 			 pm8916_wdt_resume);
 
+static const struct pm8916_wdt_data pm8916_wdt_data = {
+	.poff_reason = PON_POFF_REASON1,
+	.poff_reason2 = true,
+};
+
+static const struct pm8916_wdt_data pm8998_wdt_data = {
+	.poff_reason = PON_GEN2_POFF_REASON1,
+};
+
 static const struct of_device_id pm8916_wdt_id_table[] = {
-	{ .compatible = "qcom,pm8916-wdt" },
+	{ .compatible = "qcom,pm8916-wdt", .data = &pm8916_wdt_data },
+	{ .compatible = "qcom,pm8998-wdt", .data = &pm8998_wdt_data },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, pm8916_wdt_id_table);
